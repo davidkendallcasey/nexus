@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { CardWithNote, StudySession, ConfidenceScore } from '../types';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { CardWithNote, StudySession, ConfidenceScore, SessionResult } from '../types';
 import { updateConfidence } from '../db';
-import { MarkdownRenderer, ClozeMarkdownRenderer } from './MarkdownRenderer';
+import { HtmlRenderer, ClozeHtmlRenderer } from './HtmlRenderer';
 
 interface Props {
   session: StudySession;
-  onSessionComplete: () => void;
+  onSessionComplete: (results: SessionResult[]) => void;
   onExit: () => void;
 }
 
@@ -45,13 +45,13 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
         </p>
 
         {isCloze
-          ? <ClozeMarkdownRenderer
-              text={card.front}
+          ? <ClozeHtmlRenderer
+              html={card.front}
               revealed={false}
               className="text-2xl font-semibold"
             />
-          : <MarkdownRenderer
-              text={card.front}
+          : <HtmlRenderer
+              html={card.front}
               className="text-2xl font-semibold"
             />
         }
@@ -70,13 +70,13 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
       </p>
 
       {isCloze
-        ? <ClozeMarkdownRenderer
-            text={card.front}
+        ? <ClozeHtmlRenderer
+            html={card.front}
             revealed={true}
             className="text-2xl font-semibold"
           />
-        : <MarkdownRenderer
-            text={card.back}
+        : <HtmlRenderer
+            html={card.back}
             className="text-2xl font-semibold"
           />
       }
@@ -92,8 +92,8 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
         <div className="mt-6 pt-6 border-t border-gray-600 w-full text-left">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-3">Extra</p>
           {card.extra && (
-            <MarkdownRenderer
-              text={card.extra}
+            <HtmlRenderer
+              html={card.extra}
               className="text-gray-300 text-base"
             />
           )}
@@ -110,6 +110,10 @@ export default function Reviewer({ session, onSessionComplete, onExit }: Props) 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
 
+  // Accumulate grades in a ref (not state) so handleGrade always sees
+  // the latest value without needing it in the useCallback dependency array.
+  const resultsRef = useRef<SessionResult[]>([]);
+
   const queue = session.queue;
   const card: CardWithNote = queue[currentIndex];
   const progress = Math.round((currentIndex / queue.length) * 100);
@@ -117,8 +121,9 @@ export default function Reviewer({ session, onSessionComplete, onExit }: Props) 
 
   async function handleGrade(score: ConfidenceScore) {
     await updateConfidence(card.id, score);
+    resultsRef.current = [...resultsRef.current, { cardId: card.id, score }];
     if (currentIndex + 1 >= queue.length) {
-      onSessionComplete();
+      onSessionComplete(resultsRef.current);
     } else {
       setCurrentIndex(i => i + 1);
       setIsFlipped(false);

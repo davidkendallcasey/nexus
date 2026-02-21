@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { CardWithNote } from '../types';
+import type { CardWithNote, DeckGroup } from '../types';
 
 // ─── Note on the DB choice ────────────────────────────────────────────────────
 // We're using PGlite (Postgres-in-WASM) for browser-local persistence.
@@ -20,9 +20,16 @@ const db = new PGlite('idb://nexus');
 export async function initDB() {
   // ── Core schema ─────────────────────────────────────────────────────────────
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS deck_groups (
+      id         SERIAL PRIMARY KEY,
+      name       TEXT NOT NULL,
+      created_at BIGINT NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS decks (
       id         SERIAL PRIMARY KEY,
       name       TEXT NOT NULL,
+      group_id   INTEGER DEFAULT NULL REFERENCES deck_groups(id) ON DELETE SET NULL,
       created_at BIGINT NOT NULL DEFAULT 0
     );
 
@@ -50,6 +57,11 @@ export async function initDB() {
       confidence_score INTEGER NOT NULL DEFAULT 0 CHECK(confidence_score BETWEEN 0 AND 5),
       last_seen_at     BIGINT NOT NULL DEFAULT 0
     );
+  `);
+
+  // ── Migration: add group_id to existing decks tables that predate this feature
+  await db.exec(`
+    ALTER TABLE decks ADD COLUMN IF NOT EXISTS group_id INTEGER DEFAULT NULL REFERENCES deck_groups(id) ON DELETE SET NULL;
   `);
 
   // ── Live migration: legacy flat-card schema → Note/Card separation ──────────
@@ -114,10 +126,38 @@ export async function initDB() {
   }
 }
 
+// ─── Deck Group operations ────────────────────────────────────────────────────
+
+export async function getGroups(): Promise<DeckGroup[]> {
+  const result = await db.query<DeckGroup>(`SELECT * FROM deck_groups ORDER BY created_at ASC`);
+  return result.rows;
+}
+
+export async function createGroup(name: string): Promise<DeckGroup> {
+  const result = await db.query<DeckGroup>(
+    `INSERT INTO deck_groups (name, created_at) VALUES ($1, $2) RETURNING *`,
+    [name, Date.now()]
+  );
+  return result.rows[0];
+}
+
+export async function renameGroup(id: number, name: string) {
+  await db.query(`UPDATE deck_groups SET name = $1 WHERE id = $2`, [name, id]);
+}
+
+export async function deleteGroup(id: number) {
+  // ON DELETE SET NULL means decks in this group become ungrouped automatically.
+  await db.query(`DELETE FROM deck_groups WHERE id = $1`, [id]);
+}
+
+export async function moveDeckToGroup(deckId: number, groupId: number | null) {
+  await db.query(`UPDATE decks SET group_id = $1 WHERE id = $2`, [groupId, deckId]);
+}
+
 // ─── Deck operations ──────────────────────────────────────────────────────────
 
 export async function getDecks() {
-  const result = await db.query(`SELECT * FROM decks ORDER BY created_at DESC`);
+  const result = await db.query(`SELECT * FROM decks ORDER BY created_at ASC`);
   return result.rows;
 }
 
@@ -151,6 +191,33 @@ export async function getCardsForDeck(deckId: number): Promise<CardWithNote[]> {
     WHERE notes.deck_id = $1
     ORDER BY notes.created_at ASC
   `, [deckId]);
+  return result.rows;
+}
+
+// Multi-deck variant — fetches cards from any number of decks in one query.
+// Uses dynamic parameter placeholders since PGlite doesn't support array binding.
+export async function getCardsForDecks(deckIds: number[]): Promise<CardWithNote[]> {
+  if (deckIds.length === 0) return [];
+  const placeholders = deckIds.map((_, i) => `$${i + 1}`).join(', ');
+  const result = await db.query<CardWithNote>(`
+    SELECT
+      cards.id,
+      cards.note_id,
+      cards.confidence_score,
+      cards.last_seen_at,
+      notes.card_type,
+      notes.front,
+      notes.back,
+      notes.front_image,
+      notes.back_image,
+      notes.image_size,
+      notes.extra,
+      notes.extra_image
+    FROM cards
+    JOIN notes ON cards.note_id = notes.id
+    WHERE notes.deck_id IN (${placeholders})
+    ORDER BY notes.created_at ASC
+  `, deckIds);
   return result.rows;
 }
 
@@ -261,6 +328,36 @@ export async function updateCard(
       extra = $6, extra_image = $7
     WHERE id = (SELECT note_id FROM cards WHERE id = $8)
   `, [front, back, frontImage, backImage, imageSize, extra, extraImage, cardId]);
+}
+
+// Returns card count and mastery stats for every deck in a single query.
+// Used by the home screen to populate deck cards without opening each deck.
+export async function getDeckStats(): Promise<Record<number, { totalCards: number; masteredCards: number; masteryPercent: number }>> {
+  const result = await db.query<{
+    deck_id: number;
+    total_cards: number;
+    mastered_cards: number;
+  }>(`
+    SELECT
+      notes.deck_id,
+      COUNT(cards.id)::int                                          AS total_cards,
+      COUNT(cards.id) FILTER (WHERE cards.confidence_score = 5)::int AS mastered_cards
+    FROM notes
+    JOIN cards ON cards.note_id = notes.id
+    GROUP BY notes.deck_id
+  `);
+
+  const stats: Record<number, { totalCards: number; masteredCards: number; masteryPercent: number }> = {};
+  for (const row of result.rows) {
+    const total = row.total_cards;
+    const mastered = row.mastered_cards;
+    stats[row.deck_id] = {
+      totalCards: total,
+      masteredCards: mastered,
+      masteryPercent: total > 0 ? Math.round((mastered / total) * 100) : 0,
+    };
+  }
+  return stats;
 }
 
 export default db;

@@ -2,9 +2,16 @@ export type ConfidenceScore = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type CardType = 'basic' | 'cloze';
 
+export interface DeckGroup {
+  id: number;
+  name: string;
+  created_at: number;
+}
+
 export interface Deck {
   id: number;
   name: string;
+  group_id: number | null;
   created_at: number;
 }
 
@@ -51,8 +58,22 @@ export interface CardWithNote extends Card {
 // ─── Session types ────────────────────────────────────────────────────────────
 // intensity is now a plain number (5–100) — no more rigid union type.
 export interface StudySession {
-  deckId: number;
+  deckIds: number[];   // one or many — multi-deck sessions supported
   intensity: number;
   queue: CardWithNote[];
   currentIndex: number;
+}
+
+// One entry per card graded during a session.
+export interface SessionResult {
+  cardId: number;
+  score: ConfidenceScore;
+}
+
+// Aggregate stats returned for each deck on the home screen.
+export interface DeckStats {
+  deckId: number;
+  totalCards: number;
+  masteredCards: number;  // confidence_score = 5
+  masteryPercent: number; // 0–100
 }
