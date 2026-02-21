@@ -70,6 +70,8 @@ export default function App() {
     setDecks(deckResult as Deck[])
     setGroups(groupResult)
     setStats(statsResult)
+    // Expand all groups by default — preserve any the user has explicitly collapsed
+    setExpandedGroups(prev => new Set([...prev, ...groupResult.map((g: DeckGroup) => g.id)]))
     setLoading(false)
   }
 
@@ -537,7 +539,11 @@ function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDe
         </div>
       )}
 
-      <span className="text-gray-700 text-xs flex-shrink-0 group-hover:text-gray-500 transition">→</span>
+      <button
+        onClick={onOpen}
+        className="text-gray-700 text-xs flex-shrink-0 group-hover:text-gray-400 transition hover:text-white px-1"
+        title="Open deck"
+      >→</button>
     </div>
   )
 }

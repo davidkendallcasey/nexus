@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CardWithNote, CardType, Deck, StudySession, SessionResult } from '../types';
-import { getCardsForDeck, addCard, deleteCard, updateCard } from '../db';
+import { getCardsForDeck, addCard, deleteCard, updateCard, deleteDeck } from '../db';
 import { buildSession } from '../lib/session';
 import Reviewer from './Reviewer';
 import SessionSummary from './SessionSummary';
+import ConfirmDialog from './ConfirmDialog';
 import ImageUploader from './ImageUploader';
 import CardEditor from './CardEditor';
 
@@ -17,6 +18,7 @@ export default function DeckView({ deck, onBack }: Props) {
   const [session, setSession] = useState<StudySession | null>(null);
   const [sessionResults, setSessionResults] = useState<SessionResult[] | null>(null);
   const [intensity, setIntensity] = useState(20);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // ── Add card form state ───────────────────────────────────────────────────
   const [front, setFront] = useState('');        // HTML for basic, raw text for cloze
@@ -54,8 +56,9 @@ export default function DeckView({ deck, onBack }: Props) {
       await addCard(deck.id, front, back, 'basic', frontImage, backImage, extra || null, extraImage);
     } else {
       // Cloze: front is raw text with {{c1::token}} syntax
-      if (!front.trim() && !frontImage) return;
-      await addCard(deck.id, front.trim(), front.trim(), 'cloze', frontImage, backImage, extra || null, extraImage);
+      const clozeText = front.trim();
+      if (!clozeText && !frontImage) return;
+      await addCard(deck.id, clozeText, clozeText, 'cloze', frontImage, backImage, extra || null, extraImage);
     }
     setFront('');
     setBack('');
@@ -125,6 +128,11 @@ export default function DeckView({ deck, onBack }: Props) {
     setSession({ deckIds: [deck.id], intensity, queue, currentIndex: 0 });
   }
 
+  async function handleDeleteDeck() {
+    await deleteDeck(deck.id);
+    onBack();
+  }
+
   function handleSessionComplete(results: SessionResult[]) {
     setSession(null);
     setSessionResults(results);
@@ -171,14 +179,32 @@ export default function DeckView({ deck, onBack }: Props) {
 
         {/* Header */}
         <div className="mb-10">
-          <button onClick={onBack} className="text-gray-500 hover:text-gray-300 text-sm transition flex items-center gap-1 mb-8">
-            ← Back
-          </button>
+          <div className="flex items-center justify-between mb-8">
+            <button onClick={onBack} className="text-gray-500 hover:text-gray-300 text-sm transition flex items-center gap-1">
+              ← Back
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="text-gray-600 hover:text-red-400 text-xs transition uppercase tracking-wider"
+            >
+              Delete deck
+            </button>
+          </div>
           <div className="text-center">
             <h1 className="text-3xl font-bold tracking-tight mb-1">{deck.name}</h1>
             <p className="text-gray-500 text-sm">{cards.length} {cards.length === 1 ? 'card' : 'cards'}</p>
           </div>
         </div>
+
+        {showDeleteConfirm && (
+          <ConfirmDialog
+            title={`Delete "${deck.name}"?`}
+            message={`This will permanently delete all ${cards.length} ${cards.length === 1 ? 'card' : 'cards'} in this deck. This cannot be undone.`}
+            confirmLabel="Delete deck"
+            onConfirm={handleDeleteDeck}
+            onCancel={() => setShowDeleteConfirm(false)}
+          />
+        )}
 
         {/* Mastery Bar */}
         {cards.length > 0 && (

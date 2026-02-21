@@ -168,6 +168,11 @@ export async function createDeck(name: string) {
   );
 }
 
+export async function deleteDeck(id: number) {
+  // ON DELETE CASCADE on notes → cards means all cards are removed automatically.
+  await db.query(`DELETE FROM decks WHERE id = $1`, [id]);
+}
+
 // ─── Card/Note queries ────────────────────────────────────────────────────────
 
 // Returns a flat CardWithNote join — the UI only ever needs this shape.
