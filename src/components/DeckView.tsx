@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Card, CardType, Deck, SessionIntensity, StudySession } from '../types';
+import type { CardWithNote, CardType, Deck, StudySession } from '../types';
 import { getCardsForDeck, addCard, deleteCard, updateCard } from '../db';
 import { buildSession } from '../lib/session';
 import Reviewer from './Reviewer';
@@ -11,9 +11,13 @@ interface Props {
 }
 
 export default function DeckView({ deck, onBack }: Props) {
-  const [cards, setCards] = useState<Card[]>([]);
+  const [cards, setCards] = useState<CardWithNote[]>([]);
   const [session, setSession] = useState<StudySession | null>(null);
-  const [intensity, setIntensity] = useState<SessionIntensity>(20);
+
+  // ── Issue 4 fix: intensity is now a free number, not a rigid union ──────────
+  // Slider range: 5 → min(100, deck size). Defaults to 20 or deck size if smaller.
+  const [intensity, setIntensity] = useState(20);
+
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
   const [cardType, setCardType] = useState<CardType>('basic');
@@ -36,7 +40,7 @@ export default function DeckView({ deck, onBack }: Props) {
 
   async function loadCards() {
     const result = await getCardsForDeck(deck.id);
-    setCards(result as Card[]);
+    setCards(result);
     setLoading(false);
   }
 
@@ -73,9 +77,7 @@ export default function DeckView({ deck, onBack }: Props) {
     setFront(newText);
     setTimeout(() => {
       textarea.focus();
-      const cursorPos = selected.length > 0
-        ? start + selected.length + 6
-        : start + 6;
+      const cursorPos = selected.length > 0 ? start + selected.length + 6 : start + 6;
       textarea.setSelectionRange(cursorPos, cursorPos);
     }, 0);
   }
@@ -85,7 +87,7 @@ export default function DeckView({ deck, onBack }: Props) {
     loadCards();
   }
 
-  function startEditing(card: Card) {
+  function startEditing(card: CardWithNote) {
     setEditingId(card.id);
     setEditFront(card.front);
     setEditBack(card.back);
@@ -126,9 +128,8 @@ export default function DeckView({ deck, onBack }: Props) {
   }
 
   const masteredCount = cards.filter(c => c.confidence_score === 5).length;
-  const masteryPercent = cards.length > 0
-    ? Math.round((masteredCount / cards.length) * 100)
-    : 0;
+  const masteryPercent = cards.length > 0 ? Math.round((masteredCount / cards.length) * 100) : 0;
+  const maxIntensity = Math.min(100, Math.max(5, cards.length));
 
   if (session) {
     return (
@@ -175,21 +176,22 @@ export default function DeckView({ deck, onBack }: Props) {
       {/* Session Launcher */}
       {cards.length > 0 && (
         <div className="bg-gray-800 rounded-2xl p-6 mb-8">
-          <p className="text-gray-300 mb-4 font-semibold">Session Size</p>
-          <div className="flex gap-3 mb-6">
-            {([10, 20, 50] as SessionIntensity[]).map(n => (
-              <button
-                key={n}
-                onClick={() => setIntensity(n)}
-                className={`px-6 py-2 rounded-lg font-bold transition ${
-                  intensity === n
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
+          {/* ── Issue 4 fix: slider replaces three rigid buttons ── */}
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-gray-300 font-semibold">Session Size</p>
+            <span className="text-2xl font-bold text-blue-400">{intensity}</span>
+          </div>
+          <input
+            type="range"
+            min={5}
+            max={maxIntensity}
+            value={Math.min(intensity, maxIntensity)}
+            onChange={e => setIntensity(Number(e.target.value))}
+            className="w-full accent-blue-500 mb-6"
+          />
+          <div className="flex justify-between text-xs text-gray-500 -mt-4 mb-6">
+            <span>5</span>
+            <span>{maxIntensity}</span>
           </div>
           <button
             onClick={handleStartSession}
@@ -209,9 +211,7 @@ export default function DeckView({ deck, onBack }: Props) {
           <button
             onClick={() => setCardType('basic')}
             className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${
-              cardType === 'basic'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              cardType === 'basic' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
             Basic
@@ -219,9 +219,7 @@ export default function DeckView({ deck, onBack }: Props) {
           <button
             onClick={() => setCardType('cloze')}
             className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${
-              cardType === 'cloze'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              cardType === 'cloze' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
           >
             Cloze
@@ -317,7 +315,6 @@ export default function DeckView({ deck, onBack }: Props) {
                       <ImageUploader label="Back image" image={editBackImage} onImage={setEditBackImage} />
                     </>
                   )}
-                  {/* Image Size Slider */}
                   {(editFrontImage || editBackImage) && (
                     <div className="mb-3">
                       <div className="flex justify-between text-xs text-gray-400 mb-1">
@@ -334,7 +331,6 @@ export default function DeckView({ deck, onBack }: Props) {
                       />
                     </div>
                   )}
-                  {/* Extra */}
                   <div className="border-t border-gray-700 mt-3 pt-3">
                     <p className="text-gray-400 text-xs uppercase tracking-widest mb-2">Extra</p>
                     <textarea

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Card, StudySession, ConfidenceScore } from '../types';
+import type { CardWithNote, StudySession, ConfidenceScore } from '../types';
 import { updateConfidence } from '../db';
+import { MarkdownRenderer, ClozeMarkdownRenderer } from './MarkdownRenderer';
 
 interface Props {
   session: StudySession;
@@ -16,24 +17,6 @@ const CONFIDENCE_BUTTONS: { score: ConfidenceScore; label: string; color: string
   { score: 5, label: 'Mastered',  color: 'bg-green-500 hover:bg-green-400' },
 ];
 
-function renderClozeHidden(text: string): React.ReactNode {
-  const parts = text.split(/\{\{(.+?)\}\}/g);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <span key={i} className="inline-block bg-gray-600 text-gray-600 rounded px-3 mx-1 select-none">{part}</span>
-      : <span key={i}>{part}</span>
-  );
-}
-
-function renderClozeRevealed(text: string): React.ReactNode {
-  const parts = text.split(/\{\{(.+?)\}\}/g);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <span key={i} className="inline-block bg-green-700 text-green-200 rounded px-3 mx-1 font-bold">{part}</span>
-      : <span key={i}>{part}</span>
-  );
-}
-
 function CardImage({ src, size }: { src: string; size: number }) {
   return (
     <img
@@ -46,7 +29,7 @@ function CardImage({ src, size }: { src: string; size: number }) {
 }
 
 interface CardDisplayProps {
-  card: Card;
+  card: CardWithNote;
   isFlipped: boolean;
 }
 
@@ -60,9 +43,19 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
         <p className="text-xs uppercase tracking-widest text-gray-500 mb-6">
           {isCloze ? 'Fill in the blank' : 'Front'}
         </p>
-        <p className="text-2xl font-semibold leading-relaxed">
-          {isCloze ? renderClozeHidden(card.front) : card.front}
-        </p>
+
+        {isCloze
+          ? <ClozeMarkdownRenderer
+              text={card.front}
+              revealed={false}
+              className="text-2xl font-semibold"
+            />
+          : <MarkdownRenderer
+              text={card.front}
+              className="text-2xl font-semibold"
+            />
+        }
+
         {card.front_image && <CardImage src={card.front_image} size={size} />}
       </>
     );
@@ -75,9 +68,19 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
       <p className="text-xs uppercase tracking-widest text-gray-500 mb-6">
         {isCloze ? 'Revealed' : 'Back'}
       </p>
-      <p className="text-2xl font-semibold leading-relaxed">
-        {isCloze ? renderClozeRevealed(card.front) : card.back}
-      </p>
+
+      {isCloze
+        ? <ClozeMarkdownRenderer
+            text={card.front}
+            revealed={true}
+            className="text-2xl font-semibold"
+          />
+        : <MarkdownRenderer
+            text={card.back}
+            className="text-2xl font-semibold"
+          />
+      }
+
       {card.back_image
         ? <CardImage src={card.back_image} size={size} />
         : card.front_image
@@ -85,12 +88,14 @@ function CardDisplay({ card, isFlipped }: CardDisplayProps) {
           : null
       }
 
-      {/* Extra — only shown if it has content */}
       {hasExtra && (
         <div className="mt-6 pt-6 border-t border-gray-600 w-full text-left">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-3">Extra</p>
           {card.extra && (
-            <p className="text-gray-300 text-base leading-relaxed">{card.extra}</p>
+            <MarkdownRenderer
+              text={card.extra}
+              className="text-gray-300 text-base"
+            />
           )}
           {card.extra_image && (
             <CardImage src={card.extra_image} size={size} />
@@ -106,7 +111,7 @@ export default function Reviewer({ session, onSessionComplete, onExit }: Props) 
   const [isFlipped, setIsFlipped] = useState(false);
 
   const queue = session.queue;
-  const card: Card = queue[currentIndex];
+  const card: CardWithNote = queue[currentIndex];
   const progress = Math.round((currentIndex / queue.length) * 100);
   const isCloze = card.card_type === 'cloze';
 
