@@ -533,7 +533,10 @@ function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDe
               onClick={e => e.stopPropagation()}
             />
           ) : (
-            <span className="font-medium text-sm text-white truncate cursor-pointer" onClick={onOpen}>{deck.name}</span>
+            <button
+              onClick={onRenameStart}
+              className="flex-1 text-left font-medium text-sm text-white truncate hover:text-gray-300 transition"
+            >{deck.name}</button>
           )}
           {stat && !isRenaming && (
             <span className="text-xs text-gray-600 flex-shrink-0">{stat.totalCards} {stat.totalCards === 1 ? 'card' : 'cards'}</span>
@@ -549,13 +552,6 @@ function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDe
         )}
         {!isRenaming && !stat && <p className="text-xs text-gray-700 mt-0.5">No cards yet</p>}
       </div>
-
-      {/* Rename button */}
-      <button
-        onClick={e => { e.stopPropagation(); onRenameStart() }}
-        className="text-gray-700 group-hover:text-gray-500 hover:!text-white transition text-sm flex-shrink-0 px-1"
-        title="Rename deck"
-      >✎</button>
 
       {/* Assign to group button + dropdown */}
       {groups.length > 0 && (
