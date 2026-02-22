@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  initDB, getDecks, createDeck, getDeckStats, getCardsForDecks,
+  initDB, getDecks, createDeck, renameDeck, getDeckStats, getCardsForDecks,
   getGroups, createGroup, renameGroup, deleteGroup, moveDeckToGroup,
 } from './db'
 import type { Deck, DeckGroup, SessionResult } from './types'
@@ -43,6 +43,10 @@ export default function App() {
   const newGroupInputRef = useRef<HTMLInputElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Deck rename state ──────────────────────────────────────────────────────
+  const [renamingDeckId, setRenamingDeckId] = useState<number | null>(null)
+  const [renameDeckValue, setRenameDeckValue] = useState('')
+
   useEffect(() => { initDB().then(() => loadAll()) }, [])
 
   useEffect(() => {
@@ -80,6 +84,13 @@ export default function App() {
     if (!newDeckName.trim()) return
     await createDeck(newDeckName.trim())
     setNewDeckName('')
+    loadAll()
+  }
+
+  async function handleRenameDeck(id: number) {
+    if (!renameDeckValue.trim()) { setRenamingDeckId(null); return }
+    await renameDeck(id, renameDeckValue.trim())
+    setRenamingDeckId(null)
     loadAll()
   }
 
@@ -374,6 +385,12 @@ export default function App() {
                             assigningDeckId={assigningDeckId}
                             onAssignOpen={id => setAssigningDeckId(id)}
                             onAssign={handleMoveDeck}
+                            isRenaming={renamingDeckId === deck.id}
+                            renameDeckValue={renameDeckValue}
+                            onRenameStart={() => { setRenamingDeckId(deck.id); setRenameDeckValue(deck.name) }}
+                            onRenameChange={setRenameDeckValue}
+                            onRenameCommit={() => handleRenameDeck(deck.id)}
+                            onRenameCancel={() => setRenamingDeckId(null)}
                           />
                         ))
                       )}
@@ -402,6 +419,12 @@ export default function App() {
                       assigningDeckId={assigningDeckId}
                       onAssignOpen={id => setAssigningDeckId(id)}
                       onAssign={handleMoveDeck}
+                      isRenaming={renamingDeckId === deck.id}
+                      renameDeckValue={renameDeckValue}
+                      onRenameStart={() => { setRenamingDeckId(deck.id); setRenameDeckValue(deck.name) }}
+                      onRenameChange={setRenameDeckValue}
+                      onRenameCommit={() => handleRenameDeck(deck.id)}
+                      onRenameCancel={() => setRenamingDeckId(null)}
                     />
                   ))}
                 </div>
@@ -467,9 +490,22 @@ interface DeckRowProps {
   assigningDeckId: number | null
   onAssignOpen: (id: number) => void
   onAssign: (deckId: number, groupId: number | null) => void
+  isRenaming: boolean
+  renameDeckValue: string
+  onRenameStart: () => void
+  onRenameChange: (value: string) => void
+  onRenameCommit: () => void
+  onRenameCancel: () => void
 }
 
-function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDeckId, onAssignOpen, onAssign }: DeckRowProps) {
+function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDeckId, onAssignOpen, onAssign,
+  isRenaming, renameDeckValue, onRenameStart, onRenameChange, onRenameCommit, onRenameCancel }: DeckRowProps) {
+  const renameDeckInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (isRenaming) renameDeckInputRef.current?.focus()
+  }, [isRenaming])
+
   return (
     <div className={`group flex items-center gap-3 bg-gray-900 rounded-xl px-4 py-3.5 border transition
       ${isSelected ? 'border-blue-500/60 bg-blue-950/20' : 'border-gray-800 hover:border-gray-700'}`}
@@ -480,23 +516,46 @@ function DeckRow({ deck, stat, isSelected, onToggle, onOpen, groups, assigningDe
       </button>
 
       {/* Deck info */}
-      <div className="flex-1 min-w-0 cursor-pointer" onClick={onOpen}>
+      <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-3">
-          <span className="font-medium text-sm text-white truncate">{deck.name}</span>
-          {stat && (
+          {isRenaming ? (
+            <input
+              ref={renameDeckInputRef}
+              type="text"
+              value={renameDeckValue}
+              onChange={e => onRenameChange(e.target.value)}
+              onBlur={onRenameCommit}
+              onKeyDown={e => {
+                if (e.key === 'Enter') onRenameCommit()
+                if (e.key === 'Escape') onRenameCancel()
+              }}
+              className="flex-1 bg-transparent border-b border-gray-500 outline-none text-sm font-medium text-white"
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <span className="font-medium text-sm text-white truncate cursor-pointer" onClick={onOpen}>{deck.name}</span>
+          )}
+          {stat && !isRenaming && (
             <span className="text-xs text-gray-600 flex-shrink-0">{stat.totalCards} {stat.totalCards === 1 ? 'card' : 'cards'}</span>
           )}
         </div>
-        {stat && stat.totalCards > 0 && (
-          <div className="flex items-center gap-3 mt-1.5">
+        {!isRenaming && stat && stat.totalCards > 0 && (
+          <div className="flex items-center gap-3 mt-1.5 cursor-pointer" onClick={onOpen}>
             <div className="flex-1 bg-gray-800 rounded-full h-0.5">
               <div className="bg-green-500 h-0.5 rounded-full" style={{ width: `${stat.masteryPercent}%` }} />
             </div>
             <span className="text-xs text-green-600 flex-shrink-0 w-14 text-right">{stat.masteryPercent}% done</span>
           </div>
         )}
-        {!stat && <p className="text-xs text-gray-700 mt-0.5">No cards yet</p>}
+        {!isRenaming && !stat && <p className="text-xs text-gray-700 mt-0.5">No cards yet</p>}
       </div>
+
+      {/* Rename button */}
+      <button
+        onClick={e => { e.stopPropagation(); onRenameStart() }}
+        className="text-gray-700 group-hover:text-gray-500 hover:!text-white transition text-sm flex-shrink-0 px-1"
+        title="Rename deck"
+      >✎</button>
 
       {/* Assign to group button + dropdown */}
       {groups.length > 0 && (

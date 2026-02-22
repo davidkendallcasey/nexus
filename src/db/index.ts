@@ -168,6 +168,10 @@ export async function createDeck(name: string) {
   );
 }
 
+export async function renameDeck(id: number, name: string) {
+  await db.query(`UPDATE decks SET name = $1 WHERE id = $2`, [name, id]);
+}
+
 export async function deleteDeck(id: number) {
   // ON DELETE CASCADE on notes → cards means all cards are removed automatically.
   await db.query(`DELETE FROM decks WHERE id = $1`, [id]);
