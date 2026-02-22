@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CardWithNote, CardType, Deck, StudySession, SessionResult } from '../types';
-import { getCardsForDeck, addCard, deleteCard, updateCard, deleteDeck } from '../db';
+import { getCardsForDeck, addCard, deleteCard, updateCard, deleteDeck, renameDeck } from '../db';
 import { buildSession } from '../lib/session';
 import Reviewer from './Reviewer';
 import SessionSummary from './SessionSummary';
@@ -19,6 +19,10 @@ export default function DeckView({ deck, onBack }: Props) {
   const [sessionResults, setSessionResults] = useState<SessionResult[] | null>(null);
   const [intensity, setIntensity] = useState(20);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deckName, setDeckName] = useState(deck.name);
+  const [isRenamingDeck, setIsRenamingDeck] = useState(false);
+  const [renameDeckInput, setRenameDeckInput] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   // ── Add card form state ───────────────────────────────────────────────────
   const [front, setFront] = useState('');        // HTML for basic, raw text for cloze
@@ -43,6 +47,10 @@ export default function DeckView({ deck, onBack }: Props) {
   const frontRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { loadCards(); }, []);
+
+  useEffect(() => {
+    if (isRenamingDeck) renameInputRef.current?.focus();
+  }, [isRenamingDeck]);
 
   async function loadCards() {
     const result = await getCardsForDeck(deck.id);
@@ -133,6 +141,13 @@ export default function DeckView({ deck, onBack }: Props) {
     onBack();
   }
 
+  async function handleRenameDeck() {
+    if (!renameDeckInput.trim()) { setIsRenamingDeck(false); return; }
+    await renameDeck(deck.id, renameDeckInput.trim());
+    setDeckName(renameDeckInput.trim());
+    setIsRenamingDeck(false);
+  }
+
   function handleSessionComplete(results: SessionResult[]) {
     setSession(null);
     setSessionResults(results);
@@ -157,7 +172,7 @@ export default function DeckView({ deck, onBack }: Props) {
     return (
       <SessionSummary
         results={sessionResults}
-        deckName={deck.name}
+        deckName={deckName}
         onStudyAgain={() => {
           setSessionResults(null);
           handleStartSession();
@@ -183,15 +198,38 @@ export default function DeckView({ deck, onBack }: Props) {
             <button onClick={onBack} className="text-gray-500 hover:text-gray-300 text-sm transition flex items-center gap-1">
               ← Back
             </button>
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="text-gray-600 hover:text-red-400 text-xs transition uppercase tracking-wider"
-            >
-              Delete deck
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => { setIsRenamingDeck(true); setRenameDeckInput(deckName); }}
+                className="text-gray-600 hover:text-blue-400 text-xs transition uppercase tracking-wider"
+              >
+                Rename deck
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-gray-600 hover:text-red-400 text-xs transition uppercase tracking-wider"
+              >
+                Delete deck
+              </button>
+            </div>
           </div>
           <div className="text-center">
-            <h1 className="text-3xl font-bold tracking-tight mb-1">{deck.name}</h1>
+            {isRenamingDeck ? (
+              <input
+                ref={renameInputRef}
+                type="text"
+                value={renameDeckInput}
+                onChange={e => setRenameDeckInput(e.target.value)}
+                onBlur={handleRenameDeck}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleRenameDeck();
+                  if (e.key === 'Escape') setIsRenamingDeck(false);
+                }}
+                className="text-3xl font-bold tracking-tight mb-1 bg-transparent border-b-2 border-gray-500 outline-none text-white text-center w-full"
+              />
+            ) : (
+              <h1 className="text-3xl font-bold tracking-tight mb-1">{deckName}</h1>
+            )}
             <p className="text-gray-500 text-sm">{cards.length} {cards.length === 1 ? 'card' : 'cards'}</p>
           </div>
         </div>
