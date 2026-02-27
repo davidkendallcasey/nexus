@@ -10,10 +10,12 @@ import CardEditor from './CardEditor';
 
 interface Props {
   deck: Deck;
+  decks: Deck[];
   onBack: () => void;
+  onMoveCard: (cardId: number, targetDeckId: number) => Promise<void>;
 }
 
-export default function DeckView({ deck, onBack }: Props) {
+export default function DeckView({ deck, decks, onBack, onMoveCard }: Props) {
   const [cards, setCards] = useState<CardWithNote[]>([]);
   const [session, setSession] = useState<StudySession | null>(null);
   const [sessionResults, setSessionResults] = useState<SessionResult[] | null>(null);
@@ -36,6 +38,7 @@ export default function DeckView({ deck, onBack }: Props) {
   // ── Edit state ────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [movingCardId, setMovingCardId] = useState<number | null>(null);
   const [editFront, setEditFront] = useState('');
   const [editBack, setEditBack] = useState('');
   const [editFrontImage, setEditFrontImage] = useState<string | null>(null);
@@ -51,6 +54,13 @@ export default function DeckView({ deck, onBack }: Props) {
   useEffect(() => {
     if (isRenamingDeck) renameInputRef.current?.focus();
   }, [isRenamingDeck]);
+
+  useEffect(() => {
+    if (movingCardId === null) return;
+    function handleClick() { setMovingCardId(null); }
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, [movingCardId]);
 
   async function loadCards() {
     const result = await getCardsForDeck(deck.id);
@@ -97,6 +107,12 @@ export default function DeckView({ deck, onBack }: Props) {
 
   async function handleDelete(cardId: number) {
     await deleteCard(cardId);
+    loadCards();
+  }
+
+  async function handleMoveCard(cardId: number, targetDeckId: number) {
+    await onMoveCard(cardId, targetDeckId);
+    setMovingCardId(null);
     loadCards();
   }
 
@@ -435,6 +451,39 @@ export default function DeckView({ deck, onBack }: Props) {
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs text-gray-600 tabular-nums">L{card.confidence_score}</span>
+                        {decks.length > 1 && (
+                          <div className="relative">
+                            <button
+                              onClick={e => { e.stopPropagation(); setMovingCardId(movingCardId === card.id ? null : card.id); }}
+                              className="text-gray-600 hover:text-sky-400 transition text-base px-1"
+                              title="Move to another deck"
+                            >
+                              ⇄
+                            </button>
+                            {movingCardId === card.id && (
+                              <div
+                                className="absolute right-0 bottom-full mb-1 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-40 min-w-44 overflow-hidden"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <div className="px-3 py-2 border-b border-gray-700">
+                                  <p className="text-xs text-gray-500 uppercase tracking-wider">Move to deck</p>
+                                </div>
+                                {decks
+                                  .filter(d => d.id !== deck.id)
+                                  .map(d => (
+                                    <button
+                                      key={d.id}
+                                      onClick={() => handleMoveCard(card.id, d.id)}
+                                      className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 transition"
+                                    >
+                                      {d.name}
+                                    </button>
+                                  ))
+                                }
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <button onClick={() => startEditing(card)} className="text-gray-600 hover:text-gray-300 transition text-base px-1">✎</button>
                         <button onClick={() => handleDelete(card.id)} className="text-gray-600 hover:text-red-400 transition text-base px-1">✕</button>
                       </div>

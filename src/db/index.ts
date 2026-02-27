@@ -298,6 +298,13 @@ export async function addCard(
   await db.query(`DELETE FROM notes WHERE id = $1`, [noteId]);
 }
 
+export async function moveCardToDeck(cardId: number, targetDeckId: number): Promise<void> {
+  await db.query(
+    `UPDATE notes SET deck_id = $1 WHERE id = (SELECT note_id FROM cards WHERE id = $2)`,
+    [targetDeckId, cardId]
+  );
+}
+
 // Updates scheduling state only — content is immutable from here.
 export async function updateConfidence(cardId: number, score: number) {
   await db.query(
@@ -367,6 +374,79 @@ export async function getDeckStats(): Promise<Record<number, { totalCards: numbe
     };
   }
   return stats;
+}
+
+// ─── Export / Import ──────────────────────────────────────────────────────────
+
+export interface NexusExport {
+  version: number;
+  exportedAt: number;
+  groups: { id: number; name: string; created_at: number }[];
+  decks: { id: number; name: string; group_id: number | null; created_at: number }[];
+  notes: {
+    id: number; deck_id: number; card_type: string;
+    front: string; back: string;
+    front_image: string | null; back_image: string | null;
+    image_size: number; extra: string | null; extra_image: string | null;
+    created_at: number;
+  }[];
+  cards: { id: number; note_id: number; confidence_score: number; last_seen_at: number }[];
+}
+
+export async function exportAllData(): Promise<NexusExport> {
+  const groups = (await db.query(`SELECT * FROM deck_groups ORDER BY created_at ASC`)).rows as NexusExport['groups'];
+  const decks  = (await db.query(`SELECT * FROM decks ORDER BY created_at ASC`)).rows as NexusExport['decks'];
+  const notes  = (await db.query(`SELECT * FROM notes ORDER BY created_at ASC`)).rows as NexusExport['notes'];
+  const cards  = (await db.query(`SELECT * FROM cards ORDER BY id ASC`)).rows as NexusExport['cards'];
+  return { version: 1, exportedAt: Date.now(), groups, decks, notes, cards };
+}
+
+export async function importAllData(data: NexusExport): Promise<void> {
+  // We remap old IDs → new IDs as we insert, so nothing collides with existing data.
+  const groupIdMap = new Map<number, number>();
+  const deckIdMap  = new Map<number, number>();
+  const noteIdMap  = new Map<number, number>();
+
+  for (const g of data.groups) {
+    const r = await db.query<{ id: number }>(
+      `INSERT INTO deck_groups (name, created_at) VALUES ($1, $2) RETURNING id`,
+      [g.name, g.created_at]
+    );
+    groupIdMap.set(g.id, r.rows[0].id);
+  }
+
+  for (const d of data.decks) {
+    const newGroupId = d.group_id !== null ? (groupIdMap.get(d.group_id) ?? null) : null;
+    const r = await db.query<{ id: number }>(
+      `INSERT INTO decks (name, group_id, created_at) VALUES ($1, $2, $3) RETURNING id`,
+      [d.name, newGroupId, d.created_at]
+    );
+    deckIdMap.set(d.id, r.rows[0].id);
+  }
+
+  for (const n of data.notes) {
+    const newDeckId = deckIdMap.get(n.deck_id);
+    if (newDeckId === undefined) continue;
+    const r = await db.query<{ id: number }>(
+      `INSERT INTO notes (deck_id, card_type, front, back, front_image, back_image, image_size, extra, extra_image, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [newDeckId, n.card_type, n.front, n.back, n.front_image, n.back_image, n.image_size, n.extra, n.extra_image, n.created_at]
+    );
+    noteIdMap.set(n.id, r.rows[0].id);
+  }
+
+  for (const c of data.cards) {
+    const newNoteId = noteIdMap.get(c.note_id);
+    if (newNoteId === undefined) continue;
+    await db.query(
+      `INSERT INTO cards (note_id, confidence_score, last_seen_at) VALUES ($1, $2, $3)`,
+      [newNoteId, c.confidence_score, c.last_seen_at]
+    );
+  }
+}
+export async function clearAllData(): Promise<void> {
+  // Delete decks first — cascades to notes → cards. Then deck_groups.
+  await db.exec(`DELETE FROM decks; DELETE FROM deck_groups;`);
 }
 
 export default db;

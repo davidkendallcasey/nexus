@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   initDB, getDecks, createDeck, renameDeck, getDeckStats, getCardsForDecks,
   getGroups, createGroup, renameGroup, deleteGroup, moveDeckToGroup,
+  moveCardToDeck, clearAllData,
+  exportAllData, importAllData, type NexusExport,
 } from './db'
 import type { Deck, DeckGroup, SessionResult } from './types'
+import { isSyncConfigured, uploadBackup, downloadBackup, getLastSyncedAt } from './lib/sync'
 import { buildSession } from './lib/session'
 import DeckView from './components/DeckView'
 import Reviewer from './components/Reviewer'
@@ -28,6 +31,7 @@ export default function App() {
   const [newDeckName, setNewDeckName] = useState('')
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<AppView>({ kind: 'home' })
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'done'>('idle')
 
   // ── Selection & session state ──────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -47,7 +51,37 @@ export default function App() {
   const [renamingDeckId, setRenamingDeckId] = useState<number | null>(null)
   const [renameDeckValue, setRenameDeckValue] = useState('')
 
-  useEffect(() => { initDB().then(() => loadAll()) }, [])
+  useEffect(() => {
+    initDB().then(async () => {
+      if (isSyncConfigured()) {
+        try {
+          setSyncStatus('syncing')
+          const remote = await downloadBackup()
+          if (remote && remote.exportedAt > getLastSyncedAt()) {
+            await clearAllData()
+            await importAllData(remote)
+            localStorage.setItem('nexus-last-synced-at', String(remote.exportedAt))
+          } else if (!remote) {
+            const local = await exportAllData()
+            await uploadBackup(local)
+          }
+          setSyncStatus('idle')
+        } catch {
+          setSyncStatus('error')
+        }
+      }
+      loadAll()
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!isSyncConfigured()) return
+    function handleUnload() {
+      exportAllData().then(data => uploadBackup(data, true)).catch(() => {})
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [])
 
   useEffect(() => {
     if (showNewGroup) newGroupInputRef.current?.focus()
@@ -80,6 +114,18 @@ export default function App() {
   }
 
   // ── Deck operations ────────────────────────────────────────────────────────
+  async function handleSync() {
+    setSyncStatus('syncing')
+    try {
+      const data = await exportAllData()
+      await uploadBackup(data)
+      setSyncStatus('done')
+      setTimeout(() => setSyncStatus('idle'), 2000)
+    } catch {
+      setSyncStatus('error')
+    }
+  }
+
   async function handleCreateDeck() {
     if (!newDeckName.trim()) return
     await createDeck(newDeckName.trim())
@@ -121,6 +167,10 @@ export default function App() {
     await moveDeckToGroup(deckId, groupId)
     setAssigningDeckId(null)
     loadAll()
+  }
+
+  async function handleMoveCard(cardId: number, targetDeckId: number) {
+    await moveCardToDeck(cardId, targetDeckId)
   }
 
   // ── Selection logic ────────────────────────────────────────────────────────
@@ -175,6 +225,39 @@ export default function App() {
     setView({ kind: 'session', deckIds: ids, deckLabel: label, intensity })
   }
 
+async function handleExport() {
+  const data = await exportAllData();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `nexus-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function handleImport() {
+  const input = document.createElement('input');
+  input.type  = 'file';
+  input.accept = '.json';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      const data = JSON.parse(text) as NexusExport;
+      if (data.version !== 1) { alert('Unrecognised backup format.'); return; }
+      await importAllData(data);
+      await loadAll();
+      alert('Import complete!');
+    } catch {
+      alert('Failed to read file — make sure it is a valid Nexus backup.');
+    }
+  };
+  input.click();
+}
+
   const selectedTotalCards = [...selectedIds].reduce(
     (sum, id) => sum + (stats[id]?.totalCards ?? 0), 0
   )
@@ -193,7 +276,12 @@ export default function App() {
   )
 
   if (view.kind === 'deck') return (
-    <DeckView deck={view.deck} onBack={() => { setView({ kind: 'home' }); loadAll() }} />
+    <DeckView
+      deck={view.deck}
+      decks={decks}
+      onBack={() => { setView({ kind: 'home' }); loadAll() }}
+      onMoveCard={handleMoveCard}
+    />
   )
 
   if (view.kind === 'session') return (
@@ -223,11 +311,34 @@ export default function App() {
     <div className={`min-h-screen bg-gray-950 text-white ${anySelected ? 'pb-52' : ''}`}>
       <div className="page-container">
 
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="nexus-wordmark text-white mb-2">Nexus</h1>
-          <p className="text-gray-500 text-sm tracking-wide uppercase">Your knowledge, on demand</p>
-        </div>
+{/* Header */}
+<div className="text-center mb-12">
+  <h1 className="nexus-wordmark text-white mb-2">Nexus</h1>
+  <p className="text-gray-500 text-sm tracking-wide uppercase mb-4">Your knowledge, on demand</p>
+  <div className="flex justify-center gap-3">
+    <button
+      onClick={handleExport}
+      className="text-xs text-gray-500 hover:text-gray-300 transition uppercase tracking-wider px-3 py-1.5 rounded-lg border border-gray-800 hover:border-gray-600"
+    >
+      Export backup
+    </button>
+    <button
+      onClick={handleImport}
+      className="text-xs text-gray-500 hover:text-gray-300 transition uppercase tracking-wider px-3 py-1.5 rounded-lg border border-gray-800 hover:border-gray-600"
+    >
+      Import backup
+    </button>
+    {isSyncConfigured() && (
+      <button
+        onClick={handleSync}
+        disabled={syncStatus === 'syncing'}
+        className="text-xs text-gray-500 hover:text-gray-300 transition uppercase tracking-wider px-3 py-1.5 rounded-lg border border-gray-800 hover:border-gray-600 disabled:opacity-50"
+      >
+        {syncStatus === 'syncing' ? 'Syncing…' : syncStatus === 'error' ? 'Sync failed' : syncStatus === 'done' ? 'Synced ✓' : 'Sync now'}
+      </button>
+    )}
+  </div>
+</div>
 
         {/* Create Deck + New Group row */}
         <div className="flex gap-2 mb-10">
